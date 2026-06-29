@@ -5,7 +5,16 @@ require('dotenv').config();
 
 const app = express();
 
-app.use(cors({ origin: /^http:\/\/localhost(:\d+)?$/ }));
+const allowedOrigins = [
+  /^http:\/\/localhost(:\d+)?$/,
+  /\.vercel\.app$/,
+];
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.some(p => p.test(origin))) cb(null, true);
+    else cb(new Error('Not allowed by CORS'));
+  }
+}));
 app.use(express.json({ limit: '2mb' }));
 
 mongoose
@@ -73,6 +82,17 @@ app.get('/api/blogs', async (_req, res) => {
   try {
     const blogs = await Blog.find().sort({ createdAt: -1 });
     res.json(blogs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/blogs/:id — single post
+app.get('/api/blogs/:id', async (req, res) => {
+  try {
+    const blog = await Blog.findById(req.params.id);
+    if (!blog) return res.status(404).json({ error: 'Not found' });
+    res.json(blog);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -177,6 +197,10 @@ app.get('/api/articles/:id', async (req, res) => {
   }
 });
 
-// ── Start ────────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Backend running on http://localhost:${PORT}`));
+// ── Start (local dev only — Vercel handles this automatically) ───────────────
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3001;
+  app.listen(PORT, () => console.log(`Backend running on http://localhost:${PORT}`));
+}
+
+module.exports = app;
