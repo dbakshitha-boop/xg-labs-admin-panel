@@ -5,22 +5,30 @@ require('dotenv').config();
 
 const app = express();
 
-const allowedOrigins = [
-  /^http:\/\/localhost(:\d+)?$/,
-  /\.vercel\.app$/,
-];
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin || allowedOrigins.some(p => p.test(origin))) cb(null, true);
-    else cb(new Error('Not allowed by CORS'));
-  }
-}));
+// Allow all origins (safe for a public read API; tighten if needed)
+app.use(cors());
+app.options('*', cors());
 app.use(express.json({ limit: '2mb' }));
 
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch((err) => { console.error('MongoDB connection error:', err); process.exit(1); });
+// ── Cached MongoDB connection (required for Vercel serverless) ────────────────
+let isConnected = false;
+async function connectDB() {
+  if (isConnected) return;
+  await mongoose.connect(process.env.MONGO_URI, { bufferCommands: false });
+  isConnected = true;
+  console.log('MongoDB connected');
+}
+
+// Connect before every request
+app.use(async (_req, _res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error('MongoDB connection error:', err.message);
+    next(err);
+  }
+});
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 const blogSchema = new mongoose.Schema(
