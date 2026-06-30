@@ -72,14 +72,25 @@ const Blog = mongoose.model('Blog', blogSchema);
 // ── Contact Schema ────────────────────────────────────────────────────────────
 const contactSchema = new mongoose.Schema(
   {
-    name:    { type: String, default: '' },
-    company: { type: String, default: '' },
-    email:   { type: String, required: true },
-    phone:   { type: String, default: '' },
-    message: { type: String, default: '' },
+    name:        { type: String, default: '' },
+    company:     { type: String, default: '' },
+    email:       { type: String, required: true },
+    phone:       { type: String, default: '' },
+    message:     { type: String, default: '' },
+    status:      { type: String, enum: ['new', 'read', 'archived'], default: 'new' },
+    submittedAt: { type: String, default: () => new Date().toISOString() },
   },
   { timestamps: true }
 );
+
+contactSchema.set('toJSON', {
+  transform: (_doc, ret) => {
+    ret.id = ret._id.toString();
+    delete ret._id;
+    delete ret.__v;
+    return ret;
+  },
+});
 
 const Contact = mongoose.model('Contact', contactSchema);
 
@@ -140,43 +151,133 @@ app.delete('/api/blogs/:id', async (req, res) => {
 
 // ── Subscriber Schema ─────────────────────────────────────────────────────────
 const subscriberSchema = new mongoose.Schema(
-  { email: { type: String, required: true, unique: true, lowercase: true, trim: true } },
+  {
+    email:    { type: String, required: true, unique: true, lowercase: true, trim: true },
+    status:   { type: String, enum: ['subscribed', 'unsubscribed'], default: 'subscribed' },
+    joinedAt: { type: String, default: () => new Date().toISOString() },
+    source:   { type: String, default: 'manual' },
+    name:     { type: String, default: '' },
+    company:  { type: String, default: '' },
+    phone:    { type: String, default: '' },
+    linkedin: { type: String, default: '' },
+    twitter:  { type: String, default: '' },
+    website:  { type: String, default: '' },
+    notes:    { type: String, default: '' },
+    tags:     [String],
+    messageHistory: [{ date: String, subject: String }],
+  },
   { timestamps: true }
 );
+
+subscriberSchema.set('toJSON', {
+  transform: (_doc, ret) => {
+    ret.id = ret._id.toString();
+    delete ret._id;
+    delete ret.__v;
+    return ret;
+  },
+});
+
 const Subscriber = mongoose.model('Subscriber', subscriberSchema);
 
-// POST /api/subscribe
+// ── Subscriber Routes ─────────────────────────────────────────────────────────
+
+// POST /api/subscribe — from main website
 app.post('/api/subscribe', async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
-    const subscriber = await Subscriber.create({ email });
-    res.status(201).json({ success: true, id: subscriber._id });
+    const subscriber = await Subscriber.create({ email, source: 'newsletter' });
+    res.status(201).json(subscriber);
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ error: 'Already subscribed' });
     res.status(400).json({ error: err.message });
   }
 });
 
-// ── Contact Routes ────────────────────────────────────────────────────────────
-
-// POST /api/contact — save a contact form submission
-app.post('/api/contact', async (req, res) => {
+// GET /api/subscribers — list all (admin)
+app.get('/api/subscribers', async (_req, res) => {
   try {
-    const { name, company, email, phone, message } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email is required' });
-    const contact = await Contact.create({ name, company, email, phone, message });
-    res.status(201).json({ success: true, id: contact._id });
+    const subscribers = await Subscriber.find().sort({ createdAt: -1 });
+    res.json(subscribers);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/subscribers — add manually from admin
+app.post('/api/subscribers', async (req, res) => {
+  try {
+    const { id, _id, ...data } = req.body;
+    const subscriber = await Subscriber.create(data);
+    res.status(201).json(subscriber);
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: 'Already subscribed' });
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// PUT /api/subscribers/:id — update subscriber
+app.put('/api/subscribers/:id', async (req, res) => {
+  try {
+    const { id, _id, ...data } = req.body;
+    await Subscriber.findByIdAndUpdate(req.params.id, data);
+    res.status(204).send();
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// GET /api/contacts — list all submissions (admin use)
+// DELETE /api/subscribers/:id
+app.delete('/api/subscribers/:id', async (req, res) => {
+  try {
+    await Subscriber.findByIdAndDelete(req.params.id);
+    res.status(204).send();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Contact Routes ────────────────────────────────────────────────────────────
+
+// POST /api/contact — from main website contact form
+app.post('/api/contact', async (req, res) => {
+  try {
+    const { name, company, email, phone, message } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    const contact = await Contact.create({ name, company, email, phone, message });
+    res.status(201).json({ success: true, id: contact.id });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// GET /api/contacts — list all (admin inbox)
 app.get('/api/contacts', async (_req, res) => {
   try {
     const contacts = await Contact.find().sort({ createdAt: -1 });
     res.json(contacts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/contacts/:id — update status (read, archived)
+app.put('/api/contacts/:id', async (req, res) => {
+  try {
+    const { id, _id, ...data } = req.body;
+    await Contact.findByIdAndUpdate(req.params.id, data);
+    res.status(204).send();
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// DELETE /api/contacts/:id
+app.delete('/api/contacts/:id', async (req, res) => {
+  try {
+    await Contact.findByIdAndDelete(req.params.id);
+    res.status(204).send();
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
